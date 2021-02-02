@@ -3,7 +3,6 @@ repos:
   rev: master
   hooks:
     - id: fmt
-      args: ['--verbose', '--edition', '2018', '--']
     - id: clippy
 - repo: https://github.com/pre-commit/pre-commit-hooks
   rev: master

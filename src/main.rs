@@ -4,37 +4,28 @@ use serde::Deserialize;
 
 use serenity::{
     async_trait,
-    client::{ Client, Context, EventHandler, },
+    client::{Client, Context, EventHandler},
     framework::standard::{
-        StandardFramework,
-        CommandResult,
-        macros::{ command, group, }
+        macros::{command, group},
+        CommandResult, StandardFramework,
     },
-    model::{
-        channel::Message,
-        id::ChannelId,
-    },
+    model::{channel::Message, id::ChannelId},
 };
 
-use std::{ error::Error, path::PathBuf, path::Path, };
+use std::{error::Error, path::Path, path::PathBuf};
 
-type MyResult<T> = std::result::Result<T, Box<dyn Error>>;
-
-use structopt::{
-    clap,
-    StructOpt,
-};
+use structopt::{clap, StructOpt};
 
 #[derive(Deserialize)]
 struct Config {
-    token: String
+    token: String,
 }
 
 impl Config {
-    pub fn try_from_filepath<P: AsRef<Path>>(path: P) -> MyResult<Self> {
-        use std::io::BufReader;
-        use std::io::prelude::*;
+    pub fn try_from_filepath<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn Error>> {
         use std::fs::File;
+        use std::io::prelude::*;
+        use std::io::BufReader;
 
         let file = File::open(path)?;
         let mut buf_reader = BufReader::new(file);
@@ -61,17 +52,17 @@ struct Handler;
 impl EventHandler for Handler {}
 
 #[tokio::main]
-async fn main() -> MyResult<()> {
+async fn main() -> Result<(), Box<dyn Error>> {
     let args = MainArgs::from_args();
     let config = Config::try_from_filepath(args.config)?;
     let framework = StandardFramework::new()
-            .configure(|c| c.prefix("./"))
-            .group(&GENERAL_GROUP);
+        .configure(|c| c.prefix("./"))
+        .group(&GENERAL_GROUP);
     let mut client = Client::builder(config.token)
-            .event_handler(Handler)
-            .framework(framework)
-            .await
-            .expect("Error creating client");
+        .event_handler(Handler)
+        .framework(framework)
+        .await
+        .expect("Error creating client");
 
     if let Err(why) = client.start().await {
         println!("client fucked up. {:?}", why);
@@ -97,13 +88,14 @@ struct VoteArgs {
 }
 
 fn parse_args<Args: StructOpt>(input: &str) -> Result<Args, clap::Error> {
+    let to_clap_error = |e| clap::Error {
+        message: format!("Parsing Error: {}", e),
+        kind: clap::ErrorKind::Format,
+        info: None,
+    };
     shell_words::split(input)
-        .map_err(|e| clap::Error { 
-            message: format!("Parsing Error: {}", e),  
-            kind: clap::ErrorKind::Format,
-            info: None,
-        })
-        .and_then(|words| Args::from_iter_safe(words))
+        .map_err(to_clap_error)
+        .and_then(Args::from_iter_safe)
 }
 
 const DEFAULT_REACT: [char; 5] = [
@@ -114,35 +106,54 @@ const DEFAULT_REACT: [char; 5] = [
     '\u{274E}',  // Negative Squared Cross Mark Emoji
 ];
 const SIMPLE_REACT: [char; 2] = [
-    '\u{2705}',  // White Heavy Check Mark Emoji
-    '\u{274E}',  // Negative Squared Cross Mark Emoji
+    '\u{2705}', // White Heavy Check Mark Emoji
+    '\u{274E}', // Negative Squared Cross Mark Emoji
 ];
 
 async fn simple_vote(args: VoteArgs, ctx: &Context, ch: &ChannelId) -> CommandResult {
-    vote_impl(args, ctx, ch, &SIMPLE_REACT, 
-              "\u{2705} - In Favor   \u{274E} - Against").await
+    vote_impl(
+        args,
+        ctx,
+        ch,
+        &SIMPLE_REACT,
+        "\u{2705} - In Favor   \u{274E} - Against",
+    )
+    .await
 }
 
 async fn consensus(args: VoteArgs, ctx: &Context, ch: &ChannelId) -> CommandResult {
-    vote_impl(args, ctx, ch, &DEFAULT_REACT, 
-              "\u{2705} - Strongly In Favor  
-               \u{1F1EB} - In Favor  
+    vote_impl(
+        args,
+        ctx,
+        ch,
+        &DEFAULT_REACT,
+        "\u{2705} - Strongly In Favor
+               \u{1F1EB} - In Favor
                \u{1F1F3} - Neutral
                \u{1F1E6} - Against
-               \u{274E} - Strongly Against").await
+               \u{274E} - Strongly Against",
+    )
+    .await
 }
 
-async fn vote_impl(args: VoteArgs, ctx: &Context, ch: &ChannelId, 
-                   reactions: &[char], vote_desc: &str) 
-    -> CommandResult 
-{
-    let reply = ch.send_message(ctx, |m| {
-        m.embed(|e| {
-            e.title("PROPOSAL")
-             .description(args.proposal)
-             .field("Voting options:", vote_desc, false)
+async fn vote_impl(
+    args: VoteArgs,
+    ctx: &Context,
+    ch: &ChannelId,
+    reactions: &[char],
+    vote_desc: &str,
+) -> CommandResult {
+    let reply = ch
+        .send_message(ctx, |m| {
+            m.embed(|e| {
+                e.title("PROPOSAL").description(args.proposal).field(
+                    "Voting options:",
+                    vote_desc,
+                    false,
+                )
+            })
         })
-    }).await?;
+        .await?;
     for r in reactions {
         reply.react(ctx, *r).await?;
     }
@@ -151,14 +162,12 @@ async fn vote_impl(args: VoteArgs, ctx: &Context, ch: &ChannelId,
 
 #[command]
 async fn vote(ctx: &Context, msg: &Message) -> CommandResult {
-
     match parse_args::<VoteArgs>(&msg.content) {
-        Ok(args) if args.simple == true 
-                 => simple_vote(args, ctx, &msg.channel_id).await?,
+        Ok(args) if args.simple => simple_vote(args, ctx, &msg.channel_id).await?,
         Ok(args) => consensus(args, ctx, &msg.channel_id).await?,
-        Err(e) => { msg.reply(ctx, e).await?; },
+        Err(e) => {
+            msg.reply(ctx, e).await?;
+        }
     };
     Ok(())
 }
-
-
